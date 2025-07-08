@@ -1,0 +1,10 @@
+stop_id,stop_name,stop_desc,stop_lat,stop_lon,stop_timezone
+VILLACH,Villach Hbf (Autoreisezug),"Udine Str. 4, 9500 Villach",46.621048,13.866726,Europe/Vienna
+EDIRNE,Edirne,"İstasyon Cad. Açelya Sok. No 1, 22030 Edirne",41.655796,26.579254,Europe/Istanbul
+JESENICE,Jesenice,,46.43622,14.05478,Europe/Ljubljana
+DOBOVA,Dobova,,45.89852,15.65526,Europe/Ljubljana
+TOVARNIK,Tovarnik,,45.155487,19.148558,Europe/Belgrade
+SID,Šid,,45.117524,19.221675,Europe/Belgrade
+BEOGRAD,Beograd Centar,,44.793653,20.453131,Europe/Belgrade
+NIS,Niš,,43.316638,21.877459,Europe/Belgrade
+DIMITROVGRAD,Dimitrovgrad,,43.011167,22.764895,Europe/Sofia
