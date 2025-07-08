@@ -1,0 +1,45 @@
+name: GTFS Build & Publish
+
+on:
+  schedule:
+    - cron: '0 4 */14 * *'  # alle 14 Tage um 4:00 UTC
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas geopy beautifulsoup4 requests lxml
+
+    - name: 🔄 Run GTFS pipeline
+      working-directory: ./optima
+      run: |
+        python dl_timetable.py
+        python process_timetable.py
+        python generate_shapes.py
+        python enrich.py
+        python generate_info.py
+        python pack_gtfs.py
+
+    - name: 🚀 Upload GTFS ZIP as GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: "Optima GTFS Feed"
+        tag_name: latest
+        files: optima/optima_gtfs.zip
+        prerelease: true
+        overwrite: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
