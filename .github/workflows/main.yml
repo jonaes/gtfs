@@ -22,26 +22,23 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pandas geopy beautifulsoup4 requests lxml
-    - name: 🐚 Show current working directory
-      run: |
-        pwd
-        ls -R
 
     - name: 🔄 Run GTFS pipeline
+      working-directory: optima
       run: |
-        python optima/dl_timetable.py
-        python optima/process_timetable.py
-        python optima/generate_shapes.py
-        python optima/enrich.py
-        python optima/generate_info.py
-        python optima/pack_gtfs.py
+        python dl_timetable.py
+        python process_timetable.py
+        python generate_shapes.py
+        python enrich.py
+        python generate_info.py
+        python pack_gtfs.py
 
     - name: 🚀 Upload GTFS ZIP as GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         name: "Optima GTFS Feed"
         tag_name: latest
-        files: optima/optima_gtfs.zip
+        files: optima/optima_gtfs.zip  # Release verwendet absoluten Pfad vom Repo-Root
         prerelease: true
         overwrite: true
       env:
