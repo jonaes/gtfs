@@ -23,10 +23,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install pandas geopy beautifulsoup4 requests lxml
 
+    - name: 🔁 Lade Fahrplandaten 
+      working-directory: optima
+      run: |
+        n=0
+        until [ $n -ge 3 ]; do
+          python dl_timetable.py && break
+          n=$((n+1))
+          echo "⚠️ Fehler beim Laden – versuche erneut ($n/3) ..."
+          sleep 10
+        done
+
+
     - name: 🔄 Run GTFS pipeline
       working-directory: optima
       run: |
-        python dl_timetable.py
         python process_timetable.py
         python generate_shapes.py
         python enrich.py
