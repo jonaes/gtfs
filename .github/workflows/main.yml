@@ -33,13 +33,12 @@ jobs:
         python generate_info.py
         python pack_gtfs.py
 
-    - name: 🚀 Upload GTFS ZIP as GitHub Release
-      uses: softprops/action-gh-release@v1
+    - name: 🚀 Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
       with:
-        name: "Optima GTFS Feed"
-        tag_name: latest
-        files: optima/optima_gtfs.zip  # Release verwendet absoluten Pfad vom Repo-Root
-        prerelease: true
-        overwrite: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./optima
+        publish_branch: gh-pages
+        keep_files: false
+        force_orphan: true
+
