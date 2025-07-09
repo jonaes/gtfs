@@ -18,11 +18,17 @@ def calculate_gtfs_time(dep_str, arr_str):
     fmt = "%d.%m.%Y %H:%M"
     dep = datetime.strptime(dep_str, fmt)
     arr = datetime.strptime(arr_str, fmt)
-    delta = arr - dep
-    total_minutes = int(delta.total_seconds() // 60)
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
-    return f"{hours:02}:{minutes:02}:00"
+
+    # Nur Uhrzeit der Ankunft
+    ankunft_uhrzeit = arr.strftime("%H:%M")
+    ankunft_stunden = int(ankunft_uhrzeit.split(":")[0])
+    ankunft_minuten = int(ankunft_uhrzeit.split(":")[1])
+
+    # Tage seit Abfahrt
+    tage_diff = (arr.date() - dep.date()).days
+    total_hours = tage_diff * 24 + ankunft_stunden
+    return f"{total_hours:02}:{ankunft_minuten:02}:00"
+
 
 def parse_timetable(html):
     soup = BeautifulSoup(html, "html.parser")
