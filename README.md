@@ -3,6 +3,6 @@ This script generates an GTFS file for the Optima Express Villach <> Edirne from
 Download here:
 https://jonaes.github.io/gtfs/optima_gtfs.zip
 
-Updated every 14 days.
+Updated every 24 hours.
 
 Not an official feed.
