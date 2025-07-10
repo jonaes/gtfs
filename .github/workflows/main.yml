@@ -2,7 +2,7 @@ name: GTFS Build & Publish
 
 on:
   schedule:
-    - cron: '0 4 */14 * *'  # alle 14 Tage um 4:00 UTC
+    - cron: '0 4 */1 * *'  # alle 1 Tage um 4:00 UTC
   workflow_dispatch:
 
 jobs:
