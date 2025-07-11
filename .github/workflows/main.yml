@@ -2,7 +2,7 @@ name: GTFS Build & Publish
 
 on:
   schedule:
-    - cron: '0 4 */1 * *'  # alle 1 Tage um 4:00 UTC
+    - cron: '0 4 */7 * *'  # alle 1 Tage um 4:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,6 @@ jobs:
           sleep 10
         done
 
-
     - name: 🔄 Run GTFS pipeline
       working-directory: optima
       run: |
@@ -44,12 +43,15 @@ jobs:
         python generate_info.py
         python pack_gtfs.py
 
-    - name: 🚀 Deploy to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./optima
-        publish_branch: gh-pages
-        keep_files: false
-        force_orphan: true
+    - name: 🗃️ Verschiebe GTFS ZIP nach /output
+      run: |
+        mkdir -p output
+        mv optima/optima_gtfs.zip output/optima_gtfs.zip
 
+    - name: 💾 Commit ZIP in main
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add output/optima_gtfs.zip
+        git commit -m "🔄 Update GTFS ZIP: $(date -u +%Y-%m-%dT%H:%M:%SZ)" || echo "No changes to commit"
+        git push
