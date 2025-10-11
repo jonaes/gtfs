@@ -15,43 +15,75 @@ def fetch_html(url):
     return resp.text
 
 def calculate_gtfs_time(dep_str, arr_str):
+    """
+    Rechnet Abfahrts- und Ankunfts-Zeitstempel (dd.mm.yyyy HH:MM) in eine GTFS-konforme
+    arrival_time mit Tagessprung um (z. B. 57:50:00), nur basierend auf der Ankunftsuhrzeit
+    und dem Offset der Tage zwischen Abfahrt und Ankunft.
+    """
     fmt = "%d.%m.%Y %H:%M"
     dep = datetime.strptime(dep_str, fmt)
     arr = datetime.strptime(arr_str, fmt)
 
-    # Nur Uhrzeit der Ankunft
-    ankunft_uhrzeit = arr.strftime("%H:%M")
-    ankunft_stunden = int(ankunft_uhrzeit.split(":")[0])
-    ankunft_minuten = int(ankunft_uhrzeit.split(":")[1])
+    ah = arr.hour
+    am = arr.minute
 
-    # Tage seit Abfahrt
     tage_diff = (arr.date() - dep.date()).days
-    total_hours = tage_diff * 24 + ankunft_stunden
-    return f"{total_hours:02}:{ankunft_minuten:02}:00"
+    total_hours = tage_diff * 24 + ah
+    return f"{total_hours:02}:{am:02}:00"
 
+def _extract_richtung(block):
+    """
+    Die neue Seite hat keinen <h5> mehr im Block-Header.
+    - Alt:  block.select_one("h5")
+    - Neu:  block.select_one(".card-header > div") -> erster Textstring ist die Richtung
+    Fallbacks sind eingebaut, damit der Parser robust bleibt.
+    """
+    # 1) alter Selektor (falls irgendwann wieder vorhanden)
+    h5 = block.select_one("h5")
+    if h5 and h5.get_text(strip=True):
+        return h5.get_text(strip=True)
+
+    # 2) neuer Selektor
+    header_div = block.select_one(".card-header > div")
+    if header_div:
+        strings = list(header_div.stripped_strings)
+        if strings:
+            # erster String ist "Villach - Edirne" bzw. "Edirne - Villach"
+            return strings[0]
+
+    # 3) Fallback: nichts gefunden
+    return None
 
 def parse_timetable(html):
     soup = BeautifulSoup(html, "html.parser")
     grouped = defaultdict(list)
 
+    # jeder Fahrplan-Block (Richtung)
     for block in soup.select(".card.fp-card"):
-        direction_tag = block.select_one("h5")
-        if not direction_tag:
+        richtung = _extract_richtung(block)
+        if not richtung:
             continue
-        richtung = direction_tag.get_text(strip=True)
 
+        # einzelne Fahrten als Kacheln mit data-Attributen
         for trip in block.select(".calc-day"):
-            dep_str = trip.get("data-dep")  # z. B. "26.04.2025 21:32"
+            dep_str = trip.get("data-dep")  # z. B. "26.04.2025 21:32"
             arr_str = trip.get("data-arr")
+            if not dep_str or not arr_str:
+                continue
 
-            dep_date, dep_time = dep_str.split()
-            arr_date, arr_time = arr_str.split()
+            try:
+                dep_date, dep_time = dep_str.split()
+            except ValueError:
+                # falls Format abweicht, Fahrt überspringen
+                continue
+
             gtfs_arrival = calculate_gtfs_time(dep_str, arr_str)
 
+            # Gruppierung wie bisher: Richtung + Abfahrtszeit + GTFS-Ankunft
             key = (richtung, dep_time, gtfs_arrival)
             grouped[key].append(dep_date)
 
-    # Strukturiertes Ergebnis bauen
+    # Strukturiertes Ergebnis bauen (gleiches Schema wie zuvor)
     result = []
     for (richtung, dep_time, gtfs_arrival), dates in grouped.items():
         sorted_dates = sorted(dates, key=lambda d: datetime.strptime(d, "%d.%m.%Y"))
@@ -73,7 +105,7 @@ def main():
 
     print(f"\n💾 {OUTPUT_JSON} geschrieben mit {len(grouped_fahrten)} Fahrtvarianten\n")
 
-    # Debug-Ausgabe
+    # Debug-Ausgabe wie gehabt
     for entry in grouped_fahrten:
         print(f"🧭 {entry['richtung']}")
         print(f"   🕒 Abfahrt: {entry['abfahrt_uhrzeit']} → GTFS-Ankunft: {entry['gtfs_arrival']}")
