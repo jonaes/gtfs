@@ -16,7 +16,7 @@ def generate_feed_info():
     df = pd.read_csv(CALENDAR_DATES_FILE)
 
     #set feed validity
-    start_date = datetime.now().strftime("%Y%m%d")                                         #start: today 
+    start_date = min(df["date"].min(), datetime.now()).strftime("%Y%m%d")                                         #start: first trip or today
     last_date = pd.to_datetime(df["date"].astype(str), format="%Y%m%d").max()
     end_date = (last_date + timedelta(days=120)).strftime("%Y%m%d")                        #end: last trip plus 120 days
     version_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -36,6 +36,7 @@ def generate_feed_info():
 
 if __name__ == "__main__":
     generate_feed_info()
+
 
 
 
