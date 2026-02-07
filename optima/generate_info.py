@@ -3,8 +3,6 @@
 # and static data for the other fields
 #
 
-
-
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -15,16 +13,16 @@ def generate_feed_info():
     print(f"📂 Lade {CALENDAR_DATES_FILE} ...")
     df = pd.read_csv(CALENDAR_DATES_FILE)
 
+    # set feed validity
+    ## start: first trip or today
+    today_int = int(datetime.now().strftime("%Y%m%d"))
+    earliest_int = df["date"].astype(int).min()
+    start_date = min(today_int, earliest_int)  
     
-    today_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_str = today_dt.strftime("%Y%m%d")
-    earliest_dt = df["date"].min()
-
-    #set feed validity
-    start_dt = min(today_dt, earliest_dt)
-    start_date = start_dt.strftime("%Y%m%d")                                       #start: first trip or today
+    ## end: last trip plus 120 days                          
     last_date = pd.to_datetime(df["date"].astype(str), format="%Y%m%d").max()
-    end_date = (last_date + timedelta(days=120)).strftime("%Y%m%d")                        #end: last trip plus 120 days
+    end_date = int((last_date + timedelta(days=120)).strftime("%Y%m%d"))
+
     version_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
     info = pd.DataFrame([{
@@ -42,8 +40,3 @@ def generate_feed_info():
 
 if __name__ == "__main__":
     generate_feed_info()
-
-
-
-
-
