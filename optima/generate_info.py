@@ -8,7 +8,7 @@ def generate_feed_info():
     print(f"📂 Lade {CALENDAR_DATES_FILE} ...")
     df = pd.read_csv(CALENDAR_DATES_FILE)
 
-    start_date = df["date"].min()
+    start_date = datetime.now().strftime("%Y%m%d")
     end_date = df["date"].max()
     version_stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
 
@@ -27,3 +27,4 @@ def generate_feed_info():
 
 if __name__ == "__main__":
     generate_feed_info()
+
