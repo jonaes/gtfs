@@ -3,23 +3,19 @@ import json
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from gtfs_time import (
+    datetime_to_gtfs_minutes,
+    gtfs_minutes_to_datetime,
+    gtfs_time_to_minutes,
+    minutes_to_gtfs_time,
+)
+
 TRIPS_FILE = "trips.txt"
 TIMELINE_FILE = "timeline.csv"
 FAHRPLAN_FILE = "optima_fahrplan.json"
 STOPS_FILE = "stops.txt"
 AGENCY_FILE = "agency.txt"
 OUTPUT_FILE = "stop_times.txt"
-
-
-def time_to_minutes(t: str) -> int:
-    h, m, *_ = map(int, t.strip().split(":"))
-    return h * 60 + m
-
-
-def minutes_to_gtfs(t: float) -> str:
-    total = round(t)
-    h, m = divmod(total, 60)
-    return f"{int(h):02}:{int(m):02}:00"
 
 
 def load_fahrplan():
@@ -42,22 +38,14 @@ def load_stop_timezones():
     result = {}
     for _, row in stops.iterrows():
         stop_id = str(row["stop_id"]).strip()
-        timezone = str(row["stop_timezone"]).strip()
-        if not timezone or timezone.lower() == "nan":
+        timezone_name = str(row["stop_timezone"]).strip()
+        if not timezone_name or timezone_name.lower() == "nan":
             raise ValueError(f"❌ stop_timezone fehlt für {stop_id}")
-        result[stop_id] = ZoneInfo(timezone)
+        result[stop_id] = ZoneInfo(timezone_name)
     return result
 
 
-def gtfs_minutes_to_datetime(minutes: int, service_date, timezone: ZoneInfo):
-    """GTFS-Minuten relativ zum Verkehrstag in einen timezone-aware datetime umwandeln."""
-    day_offset, minute_of_day = divmod(minutes, 24 * 60)
-    hour, minute = divmod(minute_of_day, 60)
-    calendar_date = service_date + timedelta(days=day_offset)
-    return datetime.combine(calendar_date, time(hour, minute), tzinfo=timezone)
-
-
-def local_timeline_time_to_agency_minutes(
+def local_timeline_time_to_gtfs_minutes(
     value: str,
     local_departure_date,
     stop_timezone: ZoneInfo,
@@ -65,13 +53,14 @@ def local_timeline_time_to_agency_minutes(
     agency_timezone: ZoneInfo,
 ) -> int:
     """
-    Eine Zeit aus timeline.csv ist lokale Ortszeit des jeweiligen Halts.
+    Konvertiert eine lokale Referenzzeit aus timeline.csv in echte GTFS-Minuten.
 
-    Stunden > 24 beziehen sich auf Folgetage relativ zum lokalen Abfahrtstag.
-    Die Zeit wird zunächst in der Zeitzone des Halts lokalisiert und danach in
-    die einheitliche agency_timezone des GTFS umgerechnet.
+    timeline.csv benutzt lokale Uhrzeiten mit Stunden > 24 relativ zum lokalen
+    Abfahrtstag. Durch die Umrechnung des resultierenden timezone-aware datetime
+    ueber datetime_to_gtfs_minutes werden Zeitzonengrenzen und DST-Wechsel
+    korrekt als verstrichene Zeit behandelt.
     """
-    raw_minutes = time_to_minutes(value)
+    raw_minutes = gtfs_time_to_minutes(value)
     local_day_offset, minute_of_day = divmod(raw_minutes, 24 * 60)
     local_hour, local_minute = divmod(minute_of_day, 60)
 
@@ -81,10 +70,12 @@ def local_timeline_time_to_agency_minutes(
         time(local_hour, local_minute),
         tzinfo=stop_timezone,
     )
-    agency_dt = local_dt.astimezone(agency_timezone)
 
-    agency_day_offset = (agency_dt.date() - service_date).days
-    return agency_day_offset * 24 * 60 + agency_dt.hour * 60 + agency_dt.minute
+    return datetime_to_gtfs_minutes(
+        local_dt,
+        service_date,
+        agency_timezone,
+    )
 
 
 def normalize_timeline(
@@ -95,21 +86,20 @@ def normalize_timeline(
     agency_timezone: ZoneInfo,
 ):
     """
-    Normalisiert die lokale Referenz-Timeline auf die GTFS-Agenturzeitzone.
+    Normalisiert die lokale Referenz-Timeline auf eine echte GTFS-Zeitachse.
 
-    Wichtig: Die bisherige lineare Skalierung darf nicht auf den lokalen
-    Rohzeiten erfolgen, weil an den Zeitzonengrenzen sonst künstliche Stunden
-    entstehen bzw. verschwinden. Erst nach dieser Normalisierung werden die
-    relativen Laufzeitanteile bestimmt.
+    Erst danach werden die relativen Laufzeitanteile skaliert. Damit entstehen
+    an Zeitzonengrenzen oder bei Sommer-/Winterzeitwechseln keine kuenstlichen
+    Stunden.
     """
     first_stop_id = str(t_section.iloc[0]["stop_id"]).strip()
     if first_stop_id not in stop_timezones:
         raise ValueError(f"❌ Keine Zeitzone für {first_stop_id}")
 
-    # Der GTFS-Verkehrstag liegt in agency_timezone. Für die Tageszählung der
-    # lokalen timeline.csv benötigen wir dagegen das lokale Datum am Startort.
     actual_departure_agency = gtfs_minutes_to_datetime(
-        actual_start_min, service_date, agency_timezone
+        actual_start_min,
+        service_date,
+        agency_timezone,
     )
     local_departure_date = actual_departure_agency.astimezone(
         stop_timezones[first_stop_id]
@@ -123,14 +113,14 @@ def normalize_timeline(
             raise ValueError(f"❌ Keine Zeitzone für {stop_id}")
 
         stop_timezone = stop_timezones[stop_id]
-        normalized.at[idx, "arrival_min"] = local_timeline_time_to_agency_minutes(
+        normalized.at[idx, "arrival_min"] = local_timeline_time_to_gtfs_minutes(
             str(row["arrival_time"]),
             local_departure_date,
             stop_timezone,
             service_date,
             agency_timezone,
         )
-        normalized.at[idx, "departure_min"] = local_timeline_time_to_agency_minutes(
+        normalized.at[idx, "departure_min"] = local_timeline_time_to_gtfs_minutes(
             str(row["departure_time"]),
             local_departure_date,
             stop_timezone,
@@ -159,7 +149,6 @@ def enrich_stop_times():
         headsign = str(trip["trip_headsign"]).strip().upper()
         richtung = "E" if "EDIRNE" in headsign else "V"
 
-        # hole Fahrtinformationen aus Fahrplan (Index-Entsprechung)
         try:
             fahrdaten = fahrplan[idx]
             abfahrt = fahrdaten["abfahrt_uhrzeit"]
@@ -171,13 +160,13 @@ def enrich_stop_times():
         if not verkehrstage:
             raise ValueError(f"❌ Keine Verkehrstage für {trip_id}")
 
-        # dl_timetable.py liefert Verkehrstage bereits bezogen auf agency_timezone.
-        # Innerhalb einer Fahrplanvariante sind die normalisierten Endzeiten gleich;
-        # daher kann ein repräsentativer Verkehrstag für die Referenz-Timeline dienen.
+        # Eine Variante wird bereits nach ihren tatsaechlichen GTFS-Endzeiten
+        # gruppiert. Ein repräsentativer Verkehrstag reicht daher fuer die
+        # zeitbezogene Normalisierung ihrer Referenz-Timeline aus.
         service_date = datetime.strptime(verkehrstage[0], "%d.%m.%Y").date()
 
-        start_min = time_to_minutes(abfahrt)
-        end_min = time_to_minutes(ankunft)
+        start_min = gtfs_time_to_minutes(abfahrt)
+        end_min = gtfs_time_to_minutes(ankunft)
         actual_duration = end_min - start_min
         if actual_duration <= 0:
             raise ValueError(f"❌ Ungültige Zeitspanne für {trip_id}: {abfahrt} → {ankunft}")
@@ -188,8 +177,6 @@ def enrich_stop_times():
         if t_section.empty:
             raise ValueError(f"❌ Keine Timeline für Richtung {richtung}")
 
-        # Zuerst jeden Halt aus seiner lokalen Zeitzone in agency_timezone
-        # umrechnen. Erst danach dürfen relative Laufzeiten skaliert werden.
         t_normalized = normalize_timeline(
             t_section,
             service_date,
@@ -216,12 +203,11 @@ def enrich_stop_times():
             ]:
                 ref_min = float(row[normalized_col])
                 offset = ref_min - ref_start
-
-                # Die Skalierung erfolgt auf der bereits zeitzonenbereinigten
-                # Zeitachse, also nach tatsächlichen relativen Laufzeitanteilen
-                # und nicht nach lokalen Uhrzeiten.
                 scaled_min = start_min + (offset / ref_duration) * actual_duration
-                normalized_times[source_col] = minutes_to_gtfs(scaled_min)
+                normalized_times[source_col] = minutes_to_gtfs_time(
+                    scaled_min,
+                    with_seconds=True,
+                )
 
             all_stop_times.append({
                 "trip_id": trip_id,
@@ -229,7 +215,6 @@ def enrich_stop_times():
                 "departure_time": normalized_times["departure_time"],
                 "stop_id": row["stop_id"],
                 "stop_sequence": row["stop_sequence"],
-                # Platzhalter – wird unten gesetzt
                 "pickup_type": None,
                 "drop_off_type": None,
                 "timepoint": 0
@@ -238,11 +223,9 @@ def enrich_stop_times():
     df = pd.DataFrame(all_stop_times)
     df.sort_values(["trip_id", "stop_sequence"], inplace=True)
 
-    # Standardmäßig: kein Einstieg/Ausstieg
     df["pickup_type"] = 1
     df["drop_off_type"] = 1
 
-    # Erster Halt je trip_id = Einstieg erlaubt
     firsts = df.groupby("trip_id").first().reset_index()
     lasts = df.groupby("trip_id").last().reset_index()
 
