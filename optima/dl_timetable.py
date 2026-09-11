@@ -3,9 +3,19 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import json
 from collections import defaultdict
+from zoneinfo import ZoneInfo
 
 URL = "https://optimatours.de/timetable"
 OUTPUT_JSON = "optima_fahrplan.json"
+
+# GTFS-Zeiten einer Fahrt müssen durchgehend in der agency_timezone angegeben
+# werden. Die Optima-Webseite veröffentlicht dagegen die jeweilige Ortszeit.
+AGENCY_TIMEZONE = ZoneInfo("Europe/Berlin")
+STOP_TIMEZONES = {
+    "Villach": ZoneInfo("Europe/Vienna"),
+    "Edirne": ZoneInfo("Europe/Istanbul"),
+}
+
 
 def fetch_html(url):
     print(f"🔄 Lade HTML von {url} ...")
@@ -14,22 +24,58 @@ def fetch_html(url):
     print("✅ HTML geladen")
     return resp.text
 
-def calculate_gtfs_time(dep_str, arr_str):
+
+def _direction_stops(direction):
+    stops = [part.strip() for part in direction.split(" - ")]
+    if len(stops) != 2 or any(stop not in STOP_TIMEZONES for stop in stops):
+        raise ValueError(f"Unbekannte Richtung: {direction!r}")
+    return stops[0], stops[1]
+
+
+def _gtfs_time(dt, service_date, with_seconds=True):
+    day_offset = (dt.date() - service_date).days
+    if day_offset < 0:
+        raise ValueError("Zeit liegt vor dem GTFS-Verkehrstag")
+
+    total_hours = day_offset * 24 + dt.hour
+    result = f"{total_hours:02}:{dt.minute:02}"
+    return result + ":00" if with_seconds else result
+
+
+def calculate_gtfs_times(dep_str, arr_str, direction):
     """
-    Rechnet Abfahrts- und Ankunfts-Zeitstempel (dd.mm.yyyy HH:MM) in eine GTFS-konforme
-    arrival_time mit Tagessprung um (z. B. 57:50:00), nur basierend auf der Ankunftsuhrzeit
-    und dem Offset der Tage zwischen Abfahrt und Ankunft.
+    Rechnet die von Optima gelieferten lokalen Zeitstempel in die einheitliche
+    GTFS-Agenturzeitzone (Europe/Berlin) um.
+
+    Optima veröffentlicht Villach in Europe/Vienna und Edirne in
+    Europe/Istanbul. Dadurch ist die Differenz Edirne <-> Mitteleuropa je nach
+    Jahreszeit ein oder zwei Stunden. ZoneInfo berücksichtigt dies anhand des
+    konkreten Verkehrstags automatisch.
+
+    Rückgabe:
+      departure_time (HH:MM, für das bestehende JSON-Schema),
+      arrival_time   (GTFS HH:MM:SS, ggf. > 24 h),
+      GTFS-Verkehrstag (dd.mm.yyyy in agency_timezone)
     """
     fmt = "%d.%m.%Y %H:%M"
-    dep = datetime.strptime(dep_str, fmt)
-    arr = datetime.strptime(arr_str, fmt)
+    from_stop, to_stop = _direction_stops(direction)
 
-    ah = arr.hour
-    am = arr.minute
+    dep_local = datetime.strptime(dep_str, fmt).replace(
+        tzinfo=STOP_TIMEZONES[from_stop]
+    )
+    arr_local = datetime.strptime(arr_str, fmt).replace(
+        tzinfo=STOP_TIMEZONES[to_stop]
+    )
 
-    tage_diff = (arr.date() - dep.date()).days
-    total_hours = tage_diff * 24 + ah
-    return f"{total_hours:02}:{am:02}:00"
+    dep_agency = dep_local.astimezone(AGENCY_TIMEZONE)
+    arr_agency = arr_local.astimezone(AGENCY_TIMEZONE)
+
+    service_date = dep_agency.date()
+    dep_gtfs = _gtfs_time(dep_agency, service_date, with_seconds=False)
+    arr_gtfs = _gtfs_time(arr_agency, service_date, with_seconds=True)
+
+    return dep_gtfs, arr_gtfs, service_date.strftime("%d.%m.%Y")
+
 
 def _extract_richtung(block):
     """
@@ -54,6 +100,7 @@ def _extract_richtung(block):
     # 3) Fallback: nichts gefunden
     return None
 
+
 def parse_timetable(html):
     soup = BeautifulSoup(html, "html.parser")
     grouped = defaultdict(list)
@@ -72,29 +119,32 @@ def parse_timetable(html):
                 continue
 
             try:
-                dep_date, dep_time = dep_str.split()
+                gtfs_departure, gtfs_arrival, service_date = calculate_gtfs_times(
+                    dep_str, arr_str, richtung
+                )
             except ValueError:
-                # falls Format abweicht, Fahrt überspringen
+                # falls Format oder Richtung abweicht, Fahrt überspringen
                 continue
 
-            gtfs_arrival = calculate_gtfs_time(dep_str, arr_str)
-
-            # Gruppierung wie bisher: Richtung + Abfahrtszeit + GTFS-Ankunft
-            key = (richtung, dep_time, gtfs_arrival)
-            grouped[key].append(dep_date)
+            # Nach den bereits auf agency_timezone normalisierten Zeiten gruppieren.
+            # Dadurch werden Sommer-/Wintervarianten mit unterschiedlicher
+            # Türkei-Zeitdifferenz automatisch in getrennte GTFS-Trips aufgeteilt.
+            key = (richtung, gtfs_departure, gtfs_arrival)
+            grouped[key].append(service_date)
 
     # Strukturiertes Ergebnis bauen (gleiches Schema wie zuvor)
     result = []
-    for (richtung, dep_time, gtfs_arrival), dates in grouped.items():
+    for (richtung, gtfs_departure, gtfs_arrival), dates in grouped.items():
         sorted_dates = sorted(dates, key=lambda d: datetime.strptime(d, "%d.%m.%Y"))
         result.append({
             "richtung": richtung,
-            "abfahrt_uhrzeit": dep_time,
+            "abfahrt_uhrzeit": gtfs_departure,
             "gtfs_arrival": gtfs_arrival,
             "verkehrstage": sorted_dates
         })
 
     return result
+
 
 def main():
     html = fetch_html(URL)
@@ -108,8 +158,12 @@ def main():
     # Debug-Ausgabe wie gehabt
     for entry in grouped_fahrten:
         print(f"🧭 {entry['richtung']}")
-        print(f"   🕒 Abfahrt: {entry['abfahrt_uhrzeit']} → GTFS-Ankunft: {entry['gtfs_arrival']}")
+        print(
+            f"   🕒 GTFS ({AGENCY_TIMEZONE.key}): "
+            f"{entry['abfahrt_uhrzeit']} → {entry['gtfs_arrival']}"
+        )
         print(f"   🗓️ Verkehrstage ({len(entry['verkehrstage'])}): {', '.join(entry['verkehrstage'])}\n")
+
 
 if __name__ == "__main__":
     main()
